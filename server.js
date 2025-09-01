@@ -210,7 +210,7 @@ function revealAnswer(game) {
 
 function endGame(game) {
   game.state = 'ended';
-  const leaderboard = rankPlayers(game).slice(0, 20);
+  const leaderboard = rankPlayers(game);
   io.to(game.code).emit('game:over', { leaderboard });
   io.to(game.hostId).emit('host:game:over', { leaderboard });
 }

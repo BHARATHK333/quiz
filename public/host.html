@@ -97,10 +97,12 @@
   <!-- Final screen -->
   <div id="gameOver" class="card hidden">
     <h3>Game Over</h3>
+    <div class="final-scroll">
     <table class="table" id="finalT">
       <thead><tr><th>#</th><th>Name</th><th>Score</th></tr></thead>
       <tbody></tbody>
     </table>
+    </div>
   </div>
 </main>
 </div>
@@ -345,7 +347,14 @@ document.getElementById('endBtn').addEventListener('click', () => socket.emit('h
 socket.on('host:game:over', ({leaderboard}) => {
   hide('presenter'); hide('revealBig'); document.getElementById('gameOver').classList.remove('hidden');
   const tbody = document.querySelector('#finalT tbody'); tbody.innerHTML='';
-  leaderboard.forEach((p,i)=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${i+1}</td><td>${p.name}</td><td>${p.score}</td>`; tbody.appendChild(tr); });
+  leaderboard.forEach((p,i)=>{
+    const tr=document.createElement('tr');
+    const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+    const cls = i===0?'gold':i===1?'silver':i===2?'bronze':'';
+    const nameCell = cls ? `<span class="medal ${cls}">${medal} ${p.name}</span>` : p.name;
+    tr.innerHTML=`<td>${i+1}</td><td>${nameCell}</td><td>${p.score}</td>`;
+    tbody.appendChild(tr);
+  });
   confettiBurst();
 });
 
