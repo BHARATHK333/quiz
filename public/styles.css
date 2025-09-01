@@ -59,3 +59,21 @@ hr.sep{border:none; border-top:1px solid var(--border); margin:12px 0}
 .answer-btn.correct{border-color:#22c55e; background:#f0fdf4}
 .answer-btn.wrong{border-color:#ef4444; background:#fef2f2}
 .timer{font-variant-numeric:tabular-nums; font-weight:700}
+
+/* Presenter mode */
+.presenter { background:#fff; border:1px solid var(--border); border-radius:16px; padding:24px }
+.presenter .q { font-size:28px; font-weight:800; margin-bottom:6px }
+.presenter .meta { display:flex; justify-content:space-between; color:var(--muted); margin-bottom:12px }
+.presenter .timer { font-variant-numeric:tabular-nums; font-weight:800; }
+.presenter .pbar { height:16px; background:#eef2f7; border-radius:999px; overflow:hidden; border:1px solid var(--border) }
+.presenter .pbar > div { height:100%; width:0%; background:var(--brand); transition:width .2s ease }
+.presenter .opt { display:flex; align-items:center; gap:14px; border:1px solid var(--border); border-radius:12px; padding:12px; background:#fff }
+.presenter .opt.correct { border-color:#22c55e; background:#f0fdf4 }
+.presenter .opt .label { font-weight:700 }
+.presenter .opt .pct { min-width:64px; text-align:right; font-variant-numeric:tabular-nums }
+.bigboard { background:#0f172a; color:#fff; border-radius:16px; padding:20px; }
+.bigboard h2 { margin:0 0 10px 0; font-size:28px }
+.bigboard table { width:100%; border-collapse:collapse }
+.bigboard th, .bigboard td { padding:10px; border-bottom:1px solid rgba(255,255,255,.15) }
+.big-next { display:inline-block; padding:12px 18px; background:var(--brand); color:#fff; border-radius:12px; font-weight:800; font-size:18px; border:none; cursor:pointer }
+.center-wrap { display:flex; gap:16px; align-items:flex-start; }

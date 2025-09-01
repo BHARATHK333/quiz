@@ -45,7 +45,8 @@
     </div>
   </div>
 
-  <div class="card">
+  <!-- Editor (pre-game) -->
+  <div id="editorCard" class="card">
     <div class="flex" style="justify-content:space-between; align-items:center;">
       <div class="flex">
         <span class="badge">Quiz</span>
@@ -61,18 +62,39 @@
     </div>
   </div>
 
-  <div id="revealCard" class="card hidden">
-    <h3>Leaderboard (Top 10)</h3>
-    <table class="table" id="leaderT">
-      <thead><tr><th>#</th><th>Name</th><th>Score</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <div class="flex">
-      <button class="btn btn-primary" id="nextBtn">Next ▶</button>
-      <button class="btn" id="endBtn">End</button>
+  <!-- Presenter mode (during question) -->
+  <div id="presenter" class="presenter hidden">
+    <div class="meta">
+      <div><strong id="pIndex">Q1</strong> • <span class="muted"><span id="pAnswered">0</span>/<span id="pTotal">0</span> answered</span></div>
+      <div class="timer"><span id="pTimer">--</span></div>
+    </div>
+    <div class="q" id="pQuestion">Question will appear here</div>
+    <div id="pOptions" class="grid" style="margin-top:12px"></div>
+    <div class="progress" style="margin-top:12px"><div id="pProgress"></div></div>
+  </div>
+
+  <!-- Reveal / Leaderboard big view -->
+  <div id="revealBig" class="hidden">
+    <div class="center-wrap">
+      <div class="presenter" style="flex:2">
+        <div class="q" id="rQuestion">Question</div>
+        <div id="rOptions" class="grid" style="margin-top:12px"></div>
+      </div>
+      <div class="bigboard" style="flex:1.2">
+        <h2>Leaderboard</h2>
+        <table class="table" id="leaderT">
+          <thead><tr><th>#</th><th>Name</th><th>Score</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div style="margin-top:12px">
+          <button class="big-next" id="nextBtn">Next Question ▶</button>
+          <button class="btn" id="endBtn" style="margin-left:8px">End</button>
+        </div>
+      </div>
     </div>
   </div>
 
+  <!-- Final screen -->
   <div id="gameOver" class="card hidden">
     <h3>Game Over</h3>
     <table class="table" id="finalT">
@@ -87,21 +109,28 @@
 <script src="/common.js"></script>
 <script src="/libs/confetti.min.js"></script>
 <script>
-// Prompt for HOST_KEY and ensure it is sent on every (re)connect
+// Host auth with per-event fallback
 let HOST_KEY = sessionStorage.getItem('HOST_KEY') || prompt('Enter Host Key (from server env HOST_KEY):');
 if (HOST_KEY) sessionStorage.setItem('HOST_KEY', HOST_KEY);
 let socket = io({ autoConnect: false });
 socket.auth = { hostKey: HOST_KEY };
 socket.connect();
 socket.io.on("reconnect_attempt", () => { socket.auth = { hostKey: sessionStorage.getItem('HOST_KEY') }; });
+
 socket.on('host:error', (e) => { alert(e?.message || 'Host auth error'); });
 
 let code = null;
 let questions = [];
 let totalPlayers = 0;
+let countdownInterval = null;
 let current = null;
 
-// ----- UI helpers -----
+function ensureAtLeastOne(){
+  if (!questions.length){
+    questions.push({ prompt: 'Who is the founder of Microsoft', options: ['Bill Gates','Steve Jobs','Option 3','Option 4'], correctIndex:0, timeLimitSec:20 });
+  }
+}
+
 function renderStack(){
   const wrap = document.getElementById('qStack');
   wrap.innerHTML = '';
@@ -127,7 +156,7 @@ function renderStack(){
     renderOptions(idx);
     card.addEventListener('change', (e)=>{
       const i = parseInt(e.target.dataset.idx,10);
-      if (e.target.dataset.act === 'time'){ questions[i].timeLimitSec = parseInt(e.target.value,10)||20; }
+      if (e.target.dataset.act === 'time'){ questions[i].timeLimitSec = parseInt(e.target.value,10)||20; renderStack(); }
     });
     card.addEventListener('input', (e)=>{
       const i = parseInt(e.target.dataset.idx,10);
@@ -186,120 +215,142 @@ function renderOptions(idx){
   });
 }
 
-function ensureAtLeastOne(){
-  if (!questions.length){
-    questions.push({ prompt: 'Who is the founder of Microsoft', options: ['Bill Gates','Steve Jobs','Option 3','Option 4'], correctIndex:0, timeLimitSec:20 });
-  }
+function show(id){ document.getElementById(id).classList.remove('hidden'); }
+function hide(id){ document.getElementById(id).classList.add('hidden'); }
+function resetBars(container){
+  document.querySelectorAll(container + ' .pbar > div').forEach(el => el.style.width = '0%');
 }
 
-function copyTextValue(id){ navigator.clipboard?.writeText(document.getElementById(id).textContent || ''); }
+function buildPresenterOptions(targetId, opts){
+  const wrap = document.getElementById(targetId);
+  wrap.innerHTML = '';
+  opts.forEach((o,i)=>{
+    const row = document.createElement('div');
+    row.className = 'opt';
+    row.innerHTML = `
+      <div class="label">${String.fromCharCode(65+i)}. ${o}</div>
+      <div class="pct" id="${targetId}-pct-${i}">0%</div>
+      <div class="pbar" style="flex:1"><div id="${targetId}-bar-${i}"></div></div>
+    `;
+    wrap.appendChild(row);
+  });
+}
 
-// ----- Event wiring -----
-document.getElementById('addQ').addEventListener('click', ()=>{
-  questions.push({ prompt: 'New question', options: ['A','B','C','D'], correctIndex:0, timeLimitSec:20 });
-  renderStack();
-});
+function updatePresenterCounts(targetId, counts, denom){
+  const sum = denom || counts.reduce((a,b)=>a+b,0) || 1;
+  counts.forEach((c,i)=>{
+    const pct = Math.round((c/sum)*100);
+    const pctEl = document.getElementById(`${targetId}-pct-${i}`);
+    const barEl = document.getElementById(`${targetId}-bar-${i}`);
+    if (pctEl) pctEl.textContent = pct + '%';
+    if (barEl) barEl.style.width = pct + '%';
+  });
+}
 
+// Controls sidebar
+document.getElementById('createBtn').addEventListener('click', () => socket.emit('host:createGame', { _hostKey: sessionStorage.getItem('HOST_KEY') }));
+document.getElementById('copyPin').addEventListener('click', () => { navigator.clipboard?.writeText(document.getElementById('pin').textContent); alert('PIN copied'); });
+document.getElementById('copyLink').addEventListener('click', () => { navigator.clipboard?.writeText(location.origin + '/'); alert('Link copied'); });
+
+// Editor actions
+document.getElementById('addQ').addEventListener('click', ()=>{ questions.push({ prompt:'New question', options:['A','B','C','D'], correctIndex:0, timeLimitSec:20 }); renderStack(); });
 document.getElementById('sampleQ').addEventListener('click', ()=>{
   questions = [
     { prompt: "Which planet is known as the Red Planet?", options: ["Earth","Mars","Jupiter","Venus"], correctIndex: 1, timeLimitSec: 15 },
     { prompt: "Capital of France?", options: ["Paris","Rome","Berlin","Madrid"], correctIndex: 0, timeLimitSec: 15 },
-  ];
-  renderStack();
+  ]; renderStack();
 });
-
 document.getElementById('exportQ').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(questions, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'quiz.json';
-  a.click();
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download='quiz.json'; a.click();
+});
+document.getElementById('importQ').addEventListener('change', async (e)=>{
+  const f=e.target.files[0]; if(!f) return;
+  try{ const arr=JSON.parse(await f.text());
+    questions = arr.map(q=>({ prompt:q.prompt||'Question', options:(q.options&&q.options.length===4)?q.options:["A","B","C","D"], correctIndex:Number.isInteger(q.correctIndex)?q.correctIndex:0, timeLimitSec:Number(q.timeLimitSec)||20 }));
+    renderStack();
+  }catch(_){ alert('Invalid JSON'); }
 });
 
-document.getElementById('importQ').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  try {
-    const arr = JSON.parse(await file.text());
-    if (Array.isArray(arr) && arr.length) {
-      questions = arr.map(q => ({
-        prompt: q.prompt || 'Question',
-        options: (q.options && q.options.length===4) ? q.options : ["A","B","C","D"],
-        correctIndex: Number.isInteger(q.correctIndex) ? q.correctIndex : 0,
-        timeLimitSec: Number(q.timeLimitSec) || 20,
-      }));
-      renderStack();
-    } else { alert('Invalid JSON'); }
-  } catch(err){ alert('Invalid JSON'); }
-});
-
-document.getElementById('createBtn').addEventListener('click', () => socket.emit('host:createGame'));
-document.getElementById('copyPin').addEventListener('click', () => copyTextValue('pin'));
-document.getElementById('copyLink').addEventListener('click', () => { navigator.clipboard?.writeText(location.origin + '/'); alert('Link copied'); });
-
-// ----- Socket handlers -----
-socket.on('host:gameCreated', ({ code: c }) => {
-  code = c;
-  document.getElementById('pin').textContent = code;
-  document.getElementById('joinURL').textContent = location.origin + '/';
-});
-
-socket.on('host:lobby:update', ({players, count}) => {
-  totalPlayers = count || 0;
-  document.getElementById('playerCount').textContent = String(count);
-  const wrap = document.getElementById('players');
-  wrap.innerHTML = '';
-  players.forEach(p => {
-    const item = document.createElement('div');
-    item.className = 'q-item';
-    item.innerHTML = `<div style="flex:1">${p.name}</div><span class="small muted">${p.score} pts</span>`;
-    wrap.appendChild(item);
-  });
-});
-
-document.getElementById('startBtn').addEventListener('click', () => {
-  if (!code) return alert('Click "Create quiz / Start" first to get a PIN');
-  if (!questions.length) return alert('Add at least one question');
+document.getElementById('startBtn').addEventListener('click', ()=>{
+  if(!code) return alert('Click "Create quiz / Start" first to get a PIN');
+  if(!questions.length) return alert('Add at least one question');
   socket.emit('host:startGame', { code, questions, _hostKey: sessionStorage.getItem('HOST_KEY') });
+  // Switch to presenter mode
+  hide('editorCard'); hide('revealBig'); show('presenter');
 });
 
+// Socket handlers
+socket.on('host:gameCreated', ({ code: c }) => {
+  code = c; document.getElementById('pin').textContent = code; document.getElementById('joinURL').textContent = location.origin + '/';
+});
+socket.on('host:lobby:update', ({players, count}) => {
+  totalPlayers = count||0; document.getElementById('playerCount').textContent = String(count);
+  const wrap = document.getElementById('players'); wrap.innerHTML='';
+  players.forEach(p=>{ const item=document.createElement('div'); item.className='q-item'; item.innerHTML=`<div style="flex:1">${p.name}</div><span class="small muted">${p.score} pts</span>`; wrap.appendChild(item); });
+});
+
+// Question show -> Presenter view live
 socket.on('host:question:show', ({index,total,prompt,options,timeLimitSec}) => {
-  // Reset bars on the active question
-  const idx = index - 1;
-  options.forEach((_,i)=>{
-    const bar = document.getElementById(`bar-${idx}-${i}`);
-    if (bar) bar.style.width = '0%';
-  });
+  hide('editorCard'); hide('revealBig'); show('presenter');
+  // Set meta
+  document.getElementById('pIndex').textContent = `Q${index}/${total}`;
+  document.getElementById('pAnswered').textContent = '0';
+  document.getElementById('pTotal').textContent = String(totalPlayers);
+  document.getElementById('pQuestion').textContent = prompt;
+  // Build options
+  buildPresenterOptions('pOptions', options);
+  // Timer/progress
+  const start = Date.now();
+  const bar = document.getElementById('pProgress');
+  if (countdownInterval) clearInterval(countdownInterval);
+  countdownInterval = setInterval(()=>{
+    const elapsed = (Date.now()-start)/1000;
+    const rem = Math.max(0, timeLimitSec - elapsed);
+    document.getElementById('pTimer').textContent = `${Math.ceil(rem)}s`;
+    bar.style.width = `${Math.floor((1 - rem/timeLimitSec)*100)}%`;
+    if (rem <= .2) clearInterval(countdownInterval);
+  }, 100);
 });
 
-socket.on('host:answerProgress', ({answered, total}) => {
-  // no-op in stacked editor (optional to display per-question counter)
+// Live progress with counts
+socket.on('host:answerProgress', ({answered, total, counts}) => {
+  if (typeof answered==='number') document.getElementById('pAnswered').textContent = String(answered);
+  if (Array.isArray(counts)) updatePresenterCounts('pOptions', counts, totalPlayers);
 });
 
-socket.on('host:question:reveal', ({index, counts, leaderboard}) => {
-  const idx = index - 1;
-  const sum = counts.reduce((a,b)=>a+b,0) || 1;
-  counts.forEach((c,i)=>{
-    const bar = document.getElementById(`bar-${idx}-${i}`);
-    if (bar) bar.style.width = Math.round((c/sum)*100) + '%';
-  });
-  const tbody = document.querySelector('#leaderT tbody');
-  tbody.innerHTML = '';
-  leaderboard.forEach((p,i)=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${i+1}</td><td>${p.name}</td><td>${p.score}</td>`;
-    tbody.appendChild(tr);
-  });
-  document.getElementById('revealCard').classList.remove('hidden');
+// Reveal -> Big leaderboard + correct answer highlighted
+socket.on('host:question:reveal', ({index, total, correctIndex, counts, leaderboard}) => {
+  hide('presenter'); show('revealBig');
+  // Show question & options with correct highlight
+  const q = questions[index-1];
+  document.getElementById('rQuestion').textContent = q ? q.prompt : 'Question';
+  buildPresenterOptions('rOptions', q ? q.options : []);
+  updatePresenterCounts('rOptions', counts, counts.reduce((a,b)=>a+b,0));
+  // highlight correct
+  document.querySelectorAll('#rOptions .opt').forEach((el,i)=>{ if (i===correctIndex) el.classList.add('correct'); });
+  // Leaderboard big
+  const tbody = document.querySelector('#leaderT tbody'); tbody.innerHTML='';
+  leaderboard.forEach((p,i)=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${i+1}</td><td>${p.name}</td><td>${p.score}</td>`; tbody.appendChild(tr); });
   confettiBurst();
 });
 
-document.getElementById('nextBtn').addEventListener('click', () => socket.emit('host:next', { code }));
-document.getElementById('endBtn').addEventListener('click', () => socket.emit('host:end', { code }));
+document.getElementById('nextBtn').addEventListener('click', () => {
+  hide('revealBig'); show('presenter');
+  socket.emit('host:next', { code, _hostKey: sessionStorage.getItem('HOST_KEY') });
+});
+document.getElementById('endBtn').addEventListener('click', () => socket.emit('host:end', { code, _hostKey: sessionStorage.getItem('HOST_KEY') }));
 
-// boot
-ensureAtLeastOne();
-renderStack();
+// Final
+socket.on('host:game:over', ({leaderboard}) => {
+  hide('presenter'); hide('revealBig'); document.getElementById('gameOver').classList.remove('hidden');
+  const tbody = document.querySelector('#finalT tbody'); tbody.innerHTML='';
+  leaderboard.forEach((p,i)=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${i+1}</td><td>${p.name}</td><td>${p.score}</td>`; tbody.appendChild(tr); });
+  confettiBurst();
+});
+
+// boot editor
+ensureAtLeastOne(); renderStack();
 </script>
 </body>
 </html>

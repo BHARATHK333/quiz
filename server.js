@@ -129,6 +129,7 @@ function startQuestion(game) {
   game.state = 'question';
   game.questionStart = nowMs();
   game.answersSubmitted = 0;
+  game.answerCounts = [0,0,0,0];
   for (const p of game.players.values()) {
     p.answered = false;
     p.answerIndex = null;
@@ -325,6 +326,12 @@ io.on('connection', (socket) => {
       answered: game.answersSubmitted,
       total: game.players.size
     });
+  if (Array.isArray(game.answerCounts)) { game.answerCounts[idx] = (game.answerCounts[idx]||0) + 1; }
+  io.to(game.hostId).emit('host:answerProgress', {
+    answered: game.answersSubmitted,
+    total: game.players.size,
+    counts: game.answerCounts
+  });
     // Optionally, notify player of lock
     socket.emit('player:answerLocked', { index: idx });
   });
