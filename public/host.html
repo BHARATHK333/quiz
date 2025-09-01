@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QuizMaster Live — Host</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="container">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+  <div class="brand">QCSC Quiz</div>
+  <div class="section-title">Controls</div>
+  <div class="flex">
+    <button class="btn btn-primary" id="createBtn">Create quiz / Start</button>
+  </div>
+
+  <div class="section-title">Game PIN</div>
+  <div class="card">
+    <div class="small muted">PIN</div>
+    <div><span class="pin" id="pin">------</span></div>
+    <div class="small muted">Player link</div>
+    <div class="small"><code id="joinURL"></code></div>
+    <div class="section-actions">
+      <button class="btn" id="copyPin">Copy PIN</button>
+      <button class="btn" id="copyLink">Copy link</button>
+    </div>
+    <hr class="sep"/>
+    <div class="small muted">Players: <strong id="playerCount">0</strong></div>
+    <div id="players" class="q-list" style="max-height:200px; overflow:auto;"></div>
+  </div>
+</aside>
+
+  <!-- Main -->
+  <main class="main">
+  <div class="topbar">
+    <div class="muted small"><a href="/" class="small">Close Participant mode</a></div>
+    <div class="flex">
+      <button class="btn" id="exportQ">Export</button>
+      <label class="btn">
+        Import <input type="file" id="importQ" class="hidden" accept="application/json"/>
+      </label>
+      <button class="btn" id="sampleQ">Sample quiz</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="flex" style="justify-content:space-between; align-items:center;">
+      <div class="flex">
+        <span class="badge">Quiz</span>
+        <span class="small muted"><span id="totalCount">0</span> question(s)</span>
+      </div>
+      <button class="btn btn-primary" id="startBtn">Start interaction</button>
+    </div>
+    <hr class="sep"/>
+    <div id="qStack" class="grid"></div>
+    <div class="footer-actions">
+      <button class="btn" id="addQ">+ Add another quiz question</button>
+      <div class="small muted">Start an interaction to collect votes</div>
+    </div>
+  </div>
+
+  <div id="revealCard" class="card hidden">
+    <h3>Leaderboard (Top 10)</h3>
+    <table class="table" id="leaderT">
+      <thead><tr><th>#</th><th>Name</th><th>Score</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="flex">
+      <button class="btn btn-primary" id="nextBtn">Next ▶</button>
+      <button class="btn" id="endBtn">End</button>
+    </div>
+  </div>
+
+  <div id="gameOver" class="card hidden">
+    <h3>Game Over</h3>
+    <table class="table" id="finalT">
+      <thead><tr><th>#</th><th>Name</th><th>Score</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</main>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/common.js"></script>
+<script src="/libs/confetti.min.js"></script>
+<script>
+// Prompt for HOST_KEY and ensure it is sent on every (re)connect
+let HOST_KEY = sessionStorage.getItem('HOST_KEY') || prompt('Enter Host Key (from server env HOST_KEY):');
+if (HOST_KEY) sessionStorage.setItem('HOST_KEY', HOST_KEY);
+let socket = io({ autoConnect: false });
+socket.auth = { hostKey: HOST_KEY };
+socket.connect();
+socket.io.on("reconnect_attempt", () => { socket.auth = { hostKey: sessionStorage.getItem('HOST_KEY') }; });
+socket.on('host:error', (e) => { alert(e?.message || 'Host auth error'); });
+
+let code = null;
+let questions = [];
+let totalPlayers = 0;
+let current = null;
+
+// ----- UI helpers -----
+function renderStack(){
+  const wrap = document.getElementById('qStack');
+  wrap.innerHTML = '';
+  document.getElementById('totalCount').textContent = questions.length;
+  questions.forEach((q, idx) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="flex" style="justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <div class="flex"><strong style="margin-right:6px">Q${idx+1}</strong><span class="small muted">${q.timeLimitSec}s</span></div>
+        <div class="flex">
+          <select class="input small" data-act="time" data-idx="${idx}" style="width:auto">
+            ${[10,15,20,30,45,60].map(s => `<option value="${s}" ${q.timeLimitSec==s?'selected':''}>${s} sec</option>`).join('')}
+          </select>
+          <button class="btn small" data-act="del" data-idx="${idx}">🗑</button>
+        </div>
+      </div>
+      <input class="input" data-act="prompt" data-idx="${idx}" value="${q.prompt.replace(/"/g,'&quot;')}" placeholder="Enter your question" />
+      <div class="grid" style="margin-top:8px" id="opts-${idx}"></div>
+      <button class="btn small" data-act="addopt" data-idx="${idx}">+ Add option</button>
+    `;
+    wrap.appendChild(card);
+    renderOptions(idx);
+    card.addEventListener('change', (e)=>{
+      const i = parseInt(e.target.dataset.idx,10);
+      if (e.target.dataset.act === 'time'){ questions[i].timeLimitSec = parseInt(e.target.value,10)||20; }
+    });
+    card.addEventListener('input', (e)=>{
+      const i = parseInt(e.target.dataset.idx,10);
+      if (e.target.dataset.act === 'prompt'){ questions[i].prompt = e.target.value; }
+    });
+    card.addEventListener('click', (e)=>{
+      const btn = e.target.closest('[data-act]');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const i = parseInt(btn.dataset.idx,10);
+      if (act === 'del'){ questions.splice(i,1); renderStack(); }
+      if (act === 'addopt'){ if (questions[i].options.length>=4) return alert('Max 4 options'); questions[i].options.push('New option'); renderOptions(i); }
+    });
+  });
+}
+
+function renderOptions(idx){
+  const q = questions[idx];
+  const list = document.getElementById('opts-'+idx);
+  list.innerHTML = '';
+  q.options.forEach((opt,i)=>{
+    const row = document.createElement('div');
+    row.className = 'option' + (q.correctIndex===i ? ' correct' : '');
+    row.innerHTML = `
+      <input class="radio" type="radio" name="corr-${idx}" ${q.correctIndex===i?'checked':''} data-i="${i}" data-idx="${idx}"/>
+      <input type="text" value="${opt.replace(/"/g,'&quot;')}" data-i="${i}" data-idx="${idx}" />
+      <div class="progress"><div id="bar-${idx}-${i}"></div></div>
+      <button class="btn small" data-delopt="${i}" data-idx="${idx}">🗑</button>
+    `;
+    list.appendChild(row);
+  });
+  list.addEventListener('change', (e)=>{
+    if (e.target.matches('.radio')){
+      const i = parseInt(e.target.dataset.i,10);
+      const idx = parseInt(e.target.dataset.idx,10);
+      questions[idx].correctIndex = i;
+      renderOptions(idx);
+    }
+  });
+  list.addEventListener('input', (e)=>{
+    if (e.target.type === 'text'){
+      const i = parseInt(e.target.dataset.i,10);
+      const idx = parseInt(e.target.dataset.idx,10);
+      questions[idx].options[i] = e.target.value;
+    }
+  });
+  list.addEventListener('click', (e)=>{
+    const btn = e.target.closest('[data-delopt]');
+    if (!btn) return;
+    const i = parseInt(btn.dataset.delopt,10);
+    const idx = parseInt(btn.dataset.idx,10);
+    if (questions[idx].options.length <= 2) return;
+    questions[idx].options.splice(i,1);
+    if (questions[idx].correctIndex === i) questions[idx].correctIndex = 0;
+    renderOptions(idx);
+  });
+}
+
+function ensureAtLeastOne(){
+  if (!questions.length){
+    questions.push({ prompt: 'Who is the founder of Microsoft', options: ['Bill Gates','Steve Jobs','Option 3','Option 4'], correctIndex:0, timeLimitSec:20 });
+  }
+}
+
+function copyTextValue(id){ navigator.clipboard?.writeText(document.getElementById(id).textContent || ''); }
+
+// ----- Event wiring -----
+document.getElementById('addQ').addEventListener('click', ()=>{
+  questions.push({ prompt: 'New question', options: ['A','B','C','D'], correctIndex:0, timeLimitSec:20 });
+  renderStack();
+});
+
+document.getElementById('sampleQ').addEventListener('click', ()=>{
+  questions = [
+    { prompt: "Which planet is known as the Red Planet?", options: ["Earth","Mars","Jupiter","Venus"], correctIndex: 1, timeLimitSec: 15 },
+    { prompt: "Capital of France?", options: ["Paris","Rome","Berlin","Madrid"], correctIndex: 0, timeLimitSec: 15 },
+  ];
+  renderStack();
+});
+
+document.getElementById('exportQ').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(questions, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'quiz.json';
+  a.click();
+});
+
+document.getElementById('importQ').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const arr = JSON.parse(await file.text());
+    if (Array.isArray(arr) && arr.length) {
+      questions = arr.map(q => ({
+        prompt: q.prompt || 'Question',
+        options: (q.options && q.options.length===4) ? q.options : ["A","B","C","D"],
+        correctIndex: Number.isInteger(q.correctIndex) ? q.correctIndex : 0,
+        timeLimitSec: Number(q.timeLimitSec) || 20,
+      }));
+      renderStack();
+    } else { alert('Invalid JSON'); }
+  } catch(err){ alert('Invalid JSON'); }
+});
+
+document.getElementById('createBtn').addEventListener('click', () => socket.emit('host:createGame'));
+document.getElementById('copyPin').addEventListener('click', () => copyTextValue('pin'));
+document.getElementById('copyLink').addEventListener('click', () => { navigator.clipboard?.writeText(location.origin + '/'); alert('Link copied'); });
+
+// ----- Socket handlers -----
+socket.on('host:gameCreated', ({ code: c }) => {
+  code = c;
+  document.getElementById('pin').textContent = code;
+  document.getElementById('joinURL').textContent = location.origin + '/';
+});
+
+socket.on('host:lobby:update', ({players, count}) => {
+  totalPlayers = count || 0;
+  document.getElementById('playerCount').textContent = String(count);
+  const wrap = document.getElementById('players');
+  wrap.innerHTML = '';
+  players.forEach(p => {
+    const item = document.createElement('div');
+    item.className = 'q-item';
+    item.innerHTML = `<div style="flex:1">${p.name}</div><span class="small muted">${p.score} pts</span>`;
+    wrap.appendChild(item);
+  });
+});
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  if (!code) return alert('Click "Create quiz / Start" first to get a PIN');
+  if (!questions.length) return alert('Add at least one question');
+  socket.emit('host:startGame', { code, questions });
+});
+
+socket.on('host:question:show', ({index,total,prompt,options,timeLimitSec}) => {
+  // Reset bars on the active question
+  const idx = index - 1;
+  options.forEach((_,i)=>{
+    const bar = document.getElementById(`bar-${idx}-${i}`);
+    if (bar) bar.style.width = '0%';
+  });
+});
+
+socket.on('host:answerProgress', ({answered, total}) => {
+  // no-op in stacked editor (optional to display per-question counter)
+});
+
+socket.on('host:question:reveal', ({index, counts, leaderboard}) => {
+  const idx = index - 1;
+  const sum = counts.reduce((a,b)=>a+b,0) || 1;
+  counts.forEach((c,i)=>{
+    const bar = document.getElementById(`bar-${idx}-${i}`);
+    if (bar) bar.style.width = Math.round((c/sum)*100) + '%';
+  });
+  const tbody = document.querySelector('#leaderT tbody');
+  tbody.innerHTML = '';
+  leaderboard.forEach((p,i)=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${i+1}</td><td>${p.name}</td><td>${p.score}</td>`;
+    tbody.appendChild(tr);
+  });
+  document.getElementById('revealCard').classList.remove('hidden');
+  confettiBurst();
+});
+
+document.getElementById('nextBtn').addEventListener('click', () => socket.emit('host:next', { code }));
+document.getElementById('endBtn').addEventListener('click', () => socket.emit('host:end', { code }));
+
+// boot
+ensureAtLeastOne();
+renderStack();
+</script>
+</body>
+</html>

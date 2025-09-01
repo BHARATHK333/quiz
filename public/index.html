@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QuizMaster Live — Join</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="player-wrap">
+  <div class="flex" style="justify-content:space-between; margin-bottom:12px">
+    <div class="brand">Live Quiz <span class="badge">Player</span></div>
+  </div>
+
+  <div id="joinArea" class="card">
+    <h2>Join a Game</h2>
+    <div class="row" style="margin-top:8px">
+      <div class="col">
+        <label class="small muted">Name</label>
+        <input class="input" id="name" placeholder="Your display name" maxlength="24" />
+      </div>
+      <div class="col">
+        <label class="small muted">Game PIN</label>
+        <input class="input" id="pin" placeholder="123456" maxlength="6" />
+      </div>
+    </div>
+    <div style="margin-top:10px;">
+      <button class="btn btn-primary" id="joinBtn">Join ▶</button>
+    </div>
+  </div>
+
+  <div id="lobby" class="card hidden">
+    <div class="small muted">Waiting for the host to start…</div>
+    <div style="margin-top:6px"><span class="badge">PIN</span> <span class="pin" id="pin2"></span></div>
+  </div>
+
+  <div id="playArea" class="card hidden">
+    <div class="flex" style="justify-content:space-between;">
+      <div><strong id="qTitle">Question</strong><div class="small muted">Q <span id="qIndex">1</span>/<span id="qTotal">1</span></div></div>
+      <div class="timer"><span id="qTimer">--</span></div>
+    </div>
+    <div class="progress" style="margin:8px 0 12px 0"><div id="qProgress"></div></div>
+    <div id="qOptions" class="grid"></div>
+    <div id="locked" class="hidden small muted" style="margin-top:8px">Answer locked ✔</div>
+    <div id="revealArea" class="hidden" style="margin-top:10px">
+      <h3 id="revealHeader"></h3>
+      <p class="muted" id="yourStanding"></p>
+    </div>
+  </div>
+
+  <div id="gameOverArea" class="card hidden">
+    <h2>Game Over 🎉</h2>
+    <p class="muted" id="finalMsg"></p>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/common.js"></script>
+<script src="/libs/confetti.min.js"></script>
+<script>
+const socket = io();
+let my = { code: null, name: null };
+let current = null;
+let countdownInterval = null;
+let answered = false;
+let lockedIndex = null;
+
+function show(id){ document.getElementById(id).classList.remove('hidden'); }
+function hide(id){ document.getElementById(id).classList.add('hidden'); }
+
+document.getElementById('joinBtn').addEventListener('click', () => {
+  const name = document.getElementById('name').value.trim() || 'Player';
+  const pin = document.getElementById('pin').value.trim();
+  if (pin.length !== 6) return alert('Enter the 6-digit PIN');
+  my.name = name; my.code = pin;
+  socket.emit('player:join', { code: pin, name });
+});
+
+socket.on('player:joined', ({ code, name }) => {
+  hide('joinArea'); show('lobby');
+  document.getElementById('pin2').textContent = code;
+});
+
+socket.on('player:error', ({ message }) => alert(message));
+
+// Gameplay
+socket.on('question:show', ({index,total,prompt,options,timeLimitSec}) => {
+  hide('lobby'); hide('revealArea'); show('playArea');
+  answered = false; lockedIndex = null;
+  current = { index, total, prompt, options, timeLimitSec, start: Date.now() };
+  document.getElementById('qTitle').textContent = prompt;
+  document.getElementById('qIndex').textContent = index;
+  document.getElementById('qTotal').textContent = total;
+  document.getElementById('qTimer').textContent = `${timeLimitSec}s`;
+  document.getElementById('qOptions').innerHTML = options.map((o,i)=>`
+    <button class="answer-btn" data-i="${i}">${String.fromCharCode(65+i)}. ${o}</button>
+  `).join('');
+  document.getElementById('locked').classList.add('hidden');
+  const bar = document.getElementById('qProgress');
+  if (countdownInterval) clearInterval(countdownInterval);
+  countdownInterval = setInterval(()=>{
+    const elapsed = (Date.now() - current.start)/1000;
+    const rem = Math.max(0, current.timeLimitSec - elapsed);
+    document.getElementById('qTimer').textContent = `${Math.ceil(rem)}s`;
+    const ratio = Math.max(0, rem / current.timeLimitSec);
+    bar.style.width = `${Math.floor(ratio*100)}%`;
+    if (rem <= 0.2){ clearInterval(countdownInterval); }
+  }, 100);
+});
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.answer-btn');
+  if (!btn) return;
+  if (answered) return;
+  const i = parseInt(btn.dataset.i,10);
+  answered = true;
+  lockedIndex = i;
+  socket.emit('player:answer', { code: my.code, index: i });
+  document.getElementById('locked').classList.remove('hidden');
+  document.querySelectorAll('.answer-btn').forEach(b => b.classList.add('locked'));
+  btn.style.outline = '3px solid #16a34a';
+});
+
+socket.on('question:reveal', ({correctIndex}) => {
+  document.getElementById('revealArea').classList.remove('hidden');
+  const ok = (lockedIndex === correctIndex);
+  document.getElementById('revealHeader').textContent = ok ? '✅ Correct!' : '❌ Not this time.';
+  if (ok) confettiBurst();
+  document.querySelectorAll('.answer-btn').forEach((b,i)=>{
+    if (i === correctIndex) b.classList.add('correct');
+    if (lockedIndex !== null && i === lockedIndex && i !== correctIndex) b.classList.add('wrong');
+  });
+});
+
+socket.on('question:reveal:me', ({yourScore, yourRank}) => {
+  document.getElementById('yourStanding').textContent = `Total score: ${yourScore} • Your rank: ${yourRank ?? '—'}`;
+});
+
+socket.on('game:over', ({leaderboard}) => {
+  hide('playArea'); show('gameOverArea');
+  const me = leaderboard.find(p => p.name === my.name);
+  const top = leaderboard[0];
+  const idx = leaderboard.findIndex(p => p.name === my.name);
+  const pos = idx >= 0 ? (idx+1) : '—';
+  document.getElementById('finalMsg').textContent = `You finished #${pos}. Winner: ${top ? top.name : '—'} with ${top ? top.score : 0} points.`;
+  if (pos === 1) confettiBurst();
+});
+</script>
+</body>
+</html>
