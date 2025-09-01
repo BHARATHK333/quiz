@@ -36,6 +36,15 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 const HOST_KEY = process.env.HOST_KEY || null;
 
+// Helper to check host authorization both from connection and per-event payload
+function isAuthorizedHost(socket, maybeArgs){
+  if (socket?.data?.isHost) return true;
+  const k = maybeArgs && (maybeArgs._hostKey || maybeArgs.hostKey);
+  if (HOST_KEY && k && String(k) === String(HOST_KEY)) return true;
+  return false;
+}
+
+
 // ===== Simple in-memory store (ephemeral) =====
 
 /**
@@ -206,13 +215,15 @@ function endGame(game) {
 }
 
 io.on('connection', (socket) => {
+  // Persist provided hostKey for debugging and potential reuse
+  socket.data.hostKey = socket.handshake?.auth?.hostKey || null;
   const providedKey = socket.handshake?.auth?.hostKey;
   socket.data = socket.data || {};
   socket.data.isHost = !!(HOST_KEY && providedKey && HOST_KEY === String(providedKey));
 
   // Host creates a game
   socket.on('host:createGame', () => {
-    if (!socket.data.isHost) { socket.emit('host:error', { message: 'Not authorized (HOST_KEY required).' }); return; }
+    if (!isAuthorizedHost(socket, arguments[0])) { socket.emit('host:error', { message: 'Not authorized (HOST_KEY required).' }); return; }
     const code = makePIN();
     const game = {
       code,
@@ -231,7 +242,7 @@ io.on('connection', (socket) => {
 
   // Host starts game with quiz payload
   socket.on('host:startGame', ({ code, questions }) => {
-    if (!socket.data.isHost) { socket.emit('host:error', { message: 'Not authorized (HOST_KEY required).' }); return; }
+    if (!isAuthorizedHost(socket, arguments[0])) { socket.emit('host:error', { message: 'Not authorized (HOST_KEY required).' }); return; }
     const game = games.get(code);
     if (!game || game.hostId !== socket.id) return;
     // sanitize questions
@@ -250,7 +261,7 @@ io.on('connection', (socket) => {
 
   // Host next
   socket.on('host:next', ({ code }) => {
-    if (!socket.data.isHost) { socket.emit('host:error', { message: 'Not authorized (HOST_KEY required).' }); return; }
+    if (!isAuthorizedHost(socket, arguments[0])) { socket.emit('host:error', { message: 'Not authorized (HOST_KEY required).' }); return; }
     const game = games.get(code);
     if (!game || game.hostId !== socket.id) return;
     if (game.state === 'question') return; // wait till reveal
@@ -262,7 +273,7 @@ io.on('connection', (socket) => {
 
   // Host end early
   socket.on('host:end', ({ code }) => {
-    if (!socket.data.isHost) { socket.emit('host:error', { message: 'Not authorized (HOST_KEY required).' }); return; }
+    if (!isAuthorizedHost(socket, arguments[0])) { socket.emit('host:error', { message: 'Not authorized (HOST_KEY required).' }); return; }
     const game = games.get(code);
     if (!game || game.hostId !== socket.id) return;
     endGame(game);
@@ -320,7 +331,7 @@ io.on('connection', (socket) => {
 
   // Join host room for updates (host page)
   socket.on('host:join', ({ code }) => {
-    if (!socket.data.isHost) { socket.emit('host:error', { message: 'Not authorized (HOST_KEY required).' }); return; }
+    if (!isAuthorizedHost(socket, arguments[0])) { socket.emit('host:error', { message: 'Not authorized (HOST_KEY required).' }); return; }
     const game = games.get(code);
     if (!game || game.hostId !== socket.id) return;
     socket.join(code);

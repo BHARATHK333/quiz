@@ -260,7 +260,7 @@ socket.on('host:lobby:update', ({players, count}) => {
 document.getElementById('startBtn').addEventListener('click', () => {
   if (!code) return alert('Click "Create quiz / Start" first to get a PIN');
   if (!questions.length) return alert('Add at least one question');
-  socket.emit('host:startGame', { code, questions });
+  socket.emit('host:startGame', { code, questions, _hostKey: sessionStorage.getItem('HOST_KEY') });
 });
 
 socket.on('host:question:show', ({index,total,prompt,options,timeLimitSec}) => {
