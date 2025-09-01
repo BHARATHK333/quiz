@@ -97,6 +97,7 @@
   <!-- Final screen -->
   <div id="gameOver" class="card hidden">
     <h3>Game Over</h3>
+    <div id="winners" class="winners"></div>
     <div class="final-scroll">
     <table class="table" id="finalT">
       <thead><tr><th>#</th><th>Name</th><th>Score</th></tr></thead>
@@ -346,7 +347,24 @@ document.getElementById('endBtn').addEventListener('click', () => socket.emit('h
 // Final
 socket.on('host:game:over', ({leaderboard}) => {
   hide('presenter'); hide('revealBig'); document.getElementById('gameOver').classList.remove('hidden');
-  const tbody = document.querySelector('#finalT tbody'); tbody.innerHTML='';
+
+  // Winners banner (top 3)
+  const winners = document.getElementById('winners');
+  winners.innerHTML = '';
+  const places = ['gold','silver','bronze'];
+  leaderboard.slice(0,3).forEach((p,i)=>{
+    const card = document.createElement('div');
+    card.className = `winner-card ${places[i]||''}`;
+    const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+    card.innerHTML = `<div class="winner-rank">${medal} ${i===0?'1st':i===1?'2nd':'3rd'}</div>
+                      <div class="winner-name">${p?.name ?? ''}</div>
+                      <div class="winner-score">${p?.score ?? 0} pts</div>`;
+    winners.appendChild(card);
+  });
+
+  // Full table
+  const tbody = document.querySelector('#finalT tbody'); 
+  tbody.innerHTML='';
   leaderboard.forEach((p,i)=>{
     const tr=document.createElement('tr');
     const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';

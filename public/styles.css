@@ -84,3 +84,13 @@ hr.sep{border:none; border-top:1px solid var(--border); margin:12px 0}
 .medal.silver{background:#e5e7eb;color:#374151} /* silver */
 .medal.bronze{background:#fde68a;color:#7c2d12} /* bronze */
 .final-scroll{max-height:70vh; overflow:auto; border:1px solid var(--border); border-radius:12px}
+
+/* Winners banner */
+.winners{display:flex; gap:12px; margin:8px 0 16px 0; flex-wrap:wrap}
+.winner-card{flex:1 1 220px; border-radius:16px; padding:14px; color:#111827; background:#fff; border:2px solid var(--border)}
+.winner-card.gold{border-color:#f59e0b; background:linear-gradient(180deg,#fff7ed,#fffbeb)}
+.winner-card.silver{border-color:#9ca3af; background:linear-gradient(180deg,#f8fafc,#f3f4f6)}
+.winner-card.bronze{border-color:#d97706; background:linear-gradient(180deg,#fff7ed,#fef3c7)}
+.winner-rank{font-size:14px; font-weight:800}
+.winner-name{font-size:18px; font-weight:800; margin-top:2px}
+.winner-score{font-size:14px; color:#374151}
